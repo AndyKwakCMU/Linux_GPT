@@ -1,0 +1,75 @@
+# General computer-hardware background relevant to understanding F2FS and
+# the kernel's storage/memory stack. Same pattern as gnu_c_idioms.yaml:
+# keyword-matched into the prompt, explicitly labeled as general
+# background (not a source citation). Kept deliberately small and
+# foundational -- deeper, authoritative detail on most of these topics is
+# already indexed as real, byte-verifiable kernel documentation (see
+# Documentation/driver-api/mtdnand.rst, Documentation/core-api/dma-api-howto.rst,
+# Documentation/core-api/cachetlb.rst, Documentation/core-api/irq/concepts.rst,
+# Documentation/mm/physical_memory.rst) -- this file only fills in the
+# more basic vocabulary those documents assume the reader already has.
+
+- term: NAND flash page/block/erase-unit hierarchy
+  keywords: [nand, "flash memory", "erase unit", "flash page", "flash block"]
+  explanation: >
+    NAND flash is organized in a hierarchy: bits are grouped into pages
+    (typically a few KB, the smallest unit that can be written), and pages
+    are grouped into erase blocks (typically hundreds of pages). A page
+    can only be written once after being erased -- to change already-
+    written data, the whole containing erase block must be erased first,
+    which also erases every other page in it. This "erase-before-write"
+    asymmetry (fast, cheap writes to a fresh page; slow, coarse-grained
+    erases) is the core hardware constraint that log-structured designs
+    like F2FS are built around, since they avoid in-place updates
+    entirely by always writing to fresh space.
+
+- term: wear leveling
+  keywords: ["wear leveling", "wear-leveling", "wear level"]
+  explanation: >
+    Each NAND flash erase block tolerates only a limited number of
+    program/erase (P/E) cycles before it becomes unreliable. Wear
+    leveling spreads writes evenly across all blocks (rather than
+    repeatedly rewriting the same "hot" region) so the device wears out
+    roughly uniformly instead of failing early in one spot. This is
+    typically handled by the Flash Translation Layer (FTL) in an
+    SSD/eMMC/SD card, but a log-structured filesystem's naturally
+    rotating write pattern also helps by avoiding fixed, repeatedly-
+    updated metadata locations.
+
+- term: write amplification
+  keywords: ["write amplification"]
+  explanation: >
+    The ratio between the amount of data physically written to flash and
+    the amount of data the host actually requested to write. Because an
+    erase block must be erased as a whole, reclaiming space occupied by a
+    mix of live and stale data requires copying the still-live data
+    elsewhere before the block can be erased and reused -- that extra
+    copying is write amplification. Minimizing it (via garbage
+    collection/cleaning strategy) is a central design concern for any
+    flash-aware filesystem, including F2FS's segment cleaning.
+
+- term: DRAM vs NAND flash latency asymmetry
+  keywords: [dram, "memory hierarchy", "latency asymmetry"]
+  explanation: >
+    DRAM (main memory) read/write latency is on the order of tens of
+    nanoseconds, while NAND flash reads are on the order of tens of
+    microseconds and writes/erases can take hundreds of microseconds to
+    milliseconds -- roughly 1000x-100,000x slower than DRAM. This gap is
+    why the kernel aggressively caches flash-backed file data in DRAM
+    (the page cache) and why minimizing the number and size of flash
+    writes matters far more than minimizing DRAM operations.
+
+- term: sector vs. logical block vs. page
+  keywords: [sector, "logical block", "block size"]
+  explanation: >
+    A disk "sector" is the traditional smallest addressable unit on
+    storage hardware (historically 512 bytes, often 4096 bytes on modern
+    devices). The kernel's block layer works in "logical blocks," a
+    filesystem-chosen unit (F2FS defaults to 4KB) that may span multiple
+    hardware sectors. These are distinct from a NAND flash "page," the
+    hardware's own smallest writable unit inside the storage device,
+    which the block-layer abstraction deliberately hides from
+    filesystems -- filesystems designed for flash (like F2FS) still
+    choose their block size and write patterns with the underlying flash
+    page/erase-block geometry in mind even though it isn't exposed
+    directly.

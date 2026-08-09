@@ -1,0 +1,18 @@
+# Review status for hand-authored lesson content (src/linuxgpt/lessons/*.rst).
+# Unlike code/doc chunks (verbatim from the pinned kernel tarball, no
+# "review" concept applies), lessons are original synthesis connecting
+# real cited source/docs together -- every citation inside them is
+# byte-verified (see tests/test_lessons.py), but the connective narrative
+# itself needs a human F2FS expert's review before it's fully trusted.
+# Flip a file's status to "approved" (and note who/when) once reviewed --
+# ingest picks this up automatically, no code changes needed.
+
+f2fs_vfs_block_mm_overview.rst:
+  status: unreviewed
+  reviewer: null
+  reviewed_date: null
+
+nand_flash_hardware.rst:
+  status: unreviewed
+  reviewer: null
+  reviewed_date: null

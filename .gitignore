@@ -1,0 +1,9 @@
+.kernel_src/
+.lancedb/
+.cache/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.DS_Store

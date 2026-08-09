@@ -1,0 +1,145 @@
+# General-purpose GNU C / kernel-idiom background. These are language-level
+# explanations, not claims about this specific codebase -- prompts.py
+# labels them "(general C background, not from indexed source)" and
+# selects only entries relevant to a given question, since injecting all
+# of these into every prompt would waste context on a laptop-scale model.
+
+- term: typeof
+  keywords: [typeof]
+  explanation: >
+    `typeof(expr)` is a GNU C extension that yields the type of an
+    expression without evaluating it, used heavily in kernel macros
+    (e.g. list/rbtree helpers) so a macro can declare a temporary of the
+    same type as its argument without the caller specifying it.
+
+- term: statement expressions
+  keywords: ["({", "statement expression"]
+  explanation: >
+    `({ ... })` is a GNU C extension letting a block of statements be used
+    as an expression, evaluating to the value of its last statement.
+    Kernel macros use this so a macro can contain local variables and
+    control flow while still being usable as a single expression (e.g.
+    `min()`/`max()` avoiding double-evaluation of their arguments).
+
+- term: asm goto
+  keywords: ["asm goto", "asm_goto"]
+  explanation: >
+    `asm goto` is a GNU C extension allowing inline assembly to jump
+    directly to a C label on a given condition, used in the kernel for
+    static branches (jump labels) and other performance-critical dispatch
+    where the compiler must know the assembly can transfer control flow
+    out of the block.
+
+- term: __attribute__((packed))
+  keywords: ["__attribute__", "packed"]
+  explanation: >
+    `__attribute__((packed))` tells GCC/Clang not to insert padding
+    between struct members, so the struct's in-memory layout matches its
+    declared field order/sizes exactly -- essential for structs that
+    mirror an on-disk or on-wire format, as many filesystem structures do.
+
+- term: __attribute__((aligned))
+  keywords: ["__attribute__", "aligned"]
+  explanation: >
+    `__attribute__((aligned(N)))` forces a variable or type to be aligned
+    to an N-byte boundary, used for cache-line alignment or hardware/DMA
+    alignment requirements.
+
+- term: __attribute__((unused))
+  keywords: ["__attribute__", "unused"]
+  explanation: >
+    `__attribute__((unused))` suppresses the compiler's unused-variable/
+    function warning, commonly applied to symbols only referenced under
+    certain `#ifdef` configurations.
+
+- term: container_of pattern
+  keywords: [container_of]
+  explanation: >
+    `container_of(ptr, type, member)` is a general kernel technique (not
+    a language feature) for recovering a pointer to an enclosing struct
+    from a pointer to one of its members, using `offsetof` arithmetic.
+    Widely used for intrusive data structures (see `list_head`). The
+    specific pinned definition of this macro, if referenced, should come
+    from an indexed source chunk, not this general description.
+
+- term: intrusive linked lists (list_head)
+  keywords: [list_head, "list_add", "list_for_each"]
+  explanation: >
+    The kernel's `struct list_head` implements intrusive doubly-linked
+    lists: the link node is embedded directly inside the struct being
+    listed (rather than a list holding pointers to separate node
+    objects), and `container_of` recovers the owning struct from a
+    `list_head` pointer during traversal.
+
+- term: __builtin_expect / likely() / unlikely()
+  keywords: [__builtin_expect, likely, unlikely]
+  explanation: >
+    `__builtin_expect` is a GCC/Clang builtin giving the compiler a branch
+    prediction hint. The kernel wraps it as `likely()`/`unlikely()` macros
+    to mark hot/cold branches (e.g. error paths are usually `unlikely`).
+
+- term: compiler barrier / memory barrier macros
+  keywords: [barrier, smp_mb, smp_rmb, smp_wmb, READ_ONCE, WRITE_ONCE]
+  explanation: >
+    `barrier()` prevents the compiler from reordering memory accesses
+    across it (a compile-time-only barrier); `smp_mb()`/`smp_rmb()`/
+    `smp_wmb()` additionally emit CPU memory-barrier instructions for
+    multi-core ordering. `READ_ONCE()`/`WRITE_ONCE()` force a single,
+    non-elided memory access, used for lock-free/concurrent code paths.
+
+- term: flexible array member
+  keywords: ["flexible array", "[0]", "zero-length array"]
+  explanation: >
+    A struct's last member declared as `type name[]` (or historically
+    `type name[0]`) is a C99 flexible array member: no space is reserved
+    in the struct itself, and a variable-length trailing buffer is
+    allocated by over-allocating the struct. Common in on-disk metadata
+    structs with variable-length trailing data.
+
+- term: offsetof
+  keywords: [offsetof]
+  explanation: >
+    `offsetof(type, member)` (from `<stddef.h>`) computes the byte offset
+    of a struct member from the start of the struct, used internally by
+    `container_of` and anywhere code needs to reason about a struct's
+    memory layout directly.
+
+- term: bitfields
+  keywords: ["bitfield", ": 1;", ": 2;"]
+  explanation: >
+    `type name : N;` inside a struct declares a bitfield occupying N bits.
+    Layout/ordering of bitfields is implementation-defined by the C
+    standard, so kernel code using them relies on the specific compiler's
+    (GCC/Clang) documented behavior rather than portable guarantees.
+
+- term: __user / __kernel / __iomem / __rcu annotations
+  keywords: [__user, __kernel, __iomem, __rcu, __percpu]
+  explanation: >
+    These are Sparse (the kernel's static checker) address-space
+    annotations, expanded to nothing by a normal compiler build. They mark
+    a pointer as pointing into user space, MMIO space, an RCU-protected
+    structure, or per-CPU storage, so Sparse can flag accidental misuse
+    (e.g. dereferencing a `__user` pointer directly instead of via
+    `copy_from_user`).
+
+- term: EXPORT_SYMBOL / EXPORT_SYMBOL_GPL
+  keywords: [EXPORT_SYMBOL]
+  explanation: >
+    These macros make a kernel-internal symbol visible for use by loadable
+    modules; `EXPORT_SYMBOL_GPL` additionally restricts that use to
+    GPL-compatible modules.
+
+- term: module_init / module_exit
+  keywords: [module_init, module_exit]
+  explanation: >
+    `module_init(fn)`/`module_exit(fn)` register a subsystem's
+    initialization and cleanup functions to run when the module (or, if
+    built-in, the kernel itself) is loaded/unloaded.
+
+- term: const correctness with pointers to const structs
+  keywords: ["const struct", "static const struct"]
+  explanation: >
+    Kernel operation-table structs (`file_operations`, `inode_operations`,
+    etc.) are conventionally declared `static const`, placing them in
+    read-only memory and preventing accidental runtime modification of a
+    filesystem/driver's dispatch table.

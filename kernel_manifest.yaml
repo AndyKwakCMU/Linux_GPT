@@ -1,0 +1,75 @@
+# Pins the exact kernel release this index is built from, and the source
+# paths that get extracted from it. Every ingested chunk records
+# kernel_version from here, so citations can state "as of v6.12".
+#
+# Phase 1 scope: F2FS only. VFS core / block / mm are added in Phase 2 —
+# uncomment their path entries below when that phase starts.
+
+kernel_version: "v6.12"
+tarball_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz"
+tarball_name: "linux-6.12.tar.xz"
+# fetch_kernel_source.py cross-checks the downloaded tarball's sha256
+# against kernel.org's published sha256sums.asc for this series at fetch
+# time, rather than pinning a hash here - that keeps this file honest
+# without hand-copying a hash that would otherwise go stale/unverified.
+checksums_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc"
+
+# Paths are relative to the tarball's top-level linux-6.12/ directory.
+# "dir" entries extract everything under that directory (recursively).
+# "file" entries extract a single file.
+# "glob" entries extract files directly in a directory matching a pattern
+# (non-recursive - used for "fs/*.c top-level only").
+paths:
+  - type: dir
+    path: fs/f2fs
+
+  # --- Documentation layer: curated, not whole directories (e.g.
+  # Documentation/mm/ alone has 50+ files, most irrelevant). Chosen for
+  # relevance to understanding F2FS's design context: F2FS's own docs,
+  # the abstraction layers it sits on (VFS/block/mm), and the NAND
+  # flash/DMA/cache hardware background behind them. Same fetch+verify
+  # mechanism and same .kernel_src/ root as code, so citation
+  # verification needs no changes for these. ---
+  - type: file
+    path: Documentation/filesystems/f2fs.rst
+  - type: file
+    path: Documentation/filesystems/vfs.rst
+  - type: file
+    path: Documentation/filesystems/journalling.rst
+  - type: file
+    path: Documentation/filesystems/path-lookup.rst
+  - type: file
+    path: Documentation/block/blk-mq.rst
+  - type: file
+    path: Documentation/block/biovecs.rst
+  - type: file
+    path: Documentation/block/stat.rst
+  - type: file
+    path: Documentation/mm/page_cache.rst
+  - type: file
+    path: Documentation/mm/physical_memory.rst
+  - type: file
+    path: Documentation/admin-guide/mm/concepts.rst
+  - type: file
+    path: Documentation/driver-api/mtdnand.rst
+  - type: file
+    path: Documentation/driver-api/mtd/nand_ecc.rst
+  - type: file
+    path: Documentation/core-api/dma-api-howto.rst
+  - type: file
+    path: Documentation/core-api/cachetlb.rst
+  - type: file
+    path: Documentation/core-api/irq/concepts.rst
+
+  # --- Phase 2 (uncomment when expanding scope) ---
+  # - type: glob
+  #   path: fs
+  #   pattern: "*.c"
+  # - type: file
+  #   path: include/linux/fs.h
+  # - type: dir
+  #   path: block
+  # - type: file
+  #   path: include/linux/blkdev.h
+  # - type: dir
+  #   path: mm
