@@ -7,3 +7,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .DS_Store
+
+# pretrain/ -- standalone from-scratch pretraining project (own venv, own generated data)
+pretrain/.venv/
+pretrain/data/
+pretrain/checkpoints/
