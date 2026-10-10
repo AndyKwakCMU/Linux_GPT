@@ -1,0 +1,62 @@
+# A "piece" is one small model's training corpus: exactly which files of the
+# pinned kernel tarball its *weights* are trained on. Every piece shares the
+# same frozen tokenizer (tokenizers/kernel-v6.12-16k.json), which is what
+# keeps independently trained pieces compatible for later stitching
+# (routing, distillation, merging).
+#
+# This is NOT the RAG index scope -- that's kernel_manifest.yaml at the repo
+# root. The two are allowed to differ (e.g. the F2FS headers below are not
+# in the RAG index yet).
+#
+# Path semantics match src/linuxgpt/ingest/fetch.py's _member_matches:
+# "dir" = recursive, "file" = one file, "glob" = non-recursive pattern.
+
+name: f2fs
+kernel_version: "v6.12"
+tarball_name: "linux-6.12.tar.xz"
+checksums_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc"
+
+paths:
+  # --- F2FS source: C, headers, comments ---
+  - type: dir
+    path: fs/f2fs
+  # F2FS's own headers that live outside fs/f2fs: the on-disk format
+  # (superblock, checkpoint, NAT/SIT/SSA layouts) and its tracepoints.
+  - type: file
+    path: include/linux/f2fs_fs.h
+  - type: file
+    path: include/trace/events/f2fs.h
+
+  # --- Maintainer-written kernel docs (same curated list as
+  # kernel_manifest.yaml). Hand-authored lessons are deliberately excluded:
+  # they're synthesis, not kernel source. ---
+  - type: file
+    path: Documentation/filesystems/f2fs.rst
+  - type: file
+    path: Documentation/filesystems/vfs.rst
+  - type: file
+    path: Documentation/filesystems/journalling.rst
+  - type: file
+    path: Documentation/filesystems/path-lookup.rst
+  - type: file
+    path: Documentation/block/blk-mq.rst
+  - type: file
+    path: Documentation/block/biovecs.rst
+  - type: file
+    path: Documentation/block/stat.rst
+  - type: file
+    path: Documentation/mm/page_cache.rst
+  - type: file
+    path: Documentation/mm/physical_memory.rst
+  - type: file
+    path: Documentation/admin-guide/mm/concepts.rst
+  - type: file
+    path: Documentation/driver-api/mtdnand.rst
+  - type: file
+    path: Documentation/driver-api/mtd/nand_ecc.rst
+  - type: file
+    path: Documentation/core-api/dma-api-howto.rst
+  - type: file
+    path: Documentation/core-api/cachetlb.rst
+  - type: file
+    path: Documentation/core-api/irq/concepts.rst

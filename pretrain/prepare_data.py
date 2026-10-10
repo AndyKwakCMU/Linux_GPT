@@ -1,70 +1,76 @@
-"""Tokenizes the corpus with the trained tokenizer and writes it out as
-train.bin/val.bin -- flat uint16 arrays memory-mapped at training time
-(nanoGPT's convention), so train.py never holds the whole token stream in
-RAM and random-access batch sampling is just an array slice.
+"""Tokenizes one piece's corpus (build_corpus.py output) with the shared
+tokenizer and writes data/<piece>/train.bin + val.bin -- flat uint16 arrays
+memory-mapped at training time (nanoGPT's convention), so train.py never
+holds the whole token stream in RAM and batch sampling is an array slice.
 
-Each file is encoded separately and joined with an <|endoftext|> token so
-the model learns document boundaries (it should not treat the end of one
-struct's file and the start of an unrelated file as continuous text).
+    python prepare_data.py --piece f2fs
 
-Split is 95/5 by *file*, not by token position within a shuffled stream --
-splitting mid-file would leak a function's ending into val when its
-beginning was in train, silently inflating val performance.
+Layout of each .bin: for every source file, `<|file|>` + "path\\n", then
+that file's units for this split in source order, then `<|endoftext|>`.
+The path header tells the model which file it's in (segment.c and
+super.c read differently); the end-of-text token keeps it from treating
+the end of one file and the start of an unrelated one as continuous.
+
+The train/val split itself was decided per top-level unit in
+build_corpus.py, not here -- see that file for why.
 """
 
 from __future__ import annotations
 
 import argparse
-import random
+import itertools
+import json
 from pathlib import Path
 
 import numpy as np
 from tokenizers import Tokenizer
-from tqdm import tqdm
 
-from tokenizer_train import DEFAULT_CORPUS_DIR, iter_corpus_files
-
-PRETRAIN_ROOT = Path(__file__).resolve().parent
+from config import DEFAULT_TOKENIZER, PRETRAIN_ROOT, PRESETS, file_sha256
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus-dir", type=Path, default=DEFAULT_CORPUS_DIR)
-    parser.add_argument("--tokenizer", type=Path, default=PRETRAIN_ROOT / "data" / "tokenizer.json")
-    parser.add_argument("--out-dir", type=Path, default=PRETRAIN_ROOT / "data")
-    parser.add_argument("--val-fraction", type=float, default=0.05)
-    parser.add_argument("--seed", type=int, default=1337)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--piece", default="f2fs")
+    parser.add_argument("--tokenizer", type=Path, default=DEFAULT_TOKENIZER)
     args = parser.parse_args()
 
+    data_dir = PRETRAIN_ROOT / "data" / args.piece
+    corpus_path = data_dir / "corpus.jsonl"
+    if not corpus_path.is_file():
+        raise SystemExit(f"No {corpus_path} -- run `python build_corpus.py --piece {args.piece}` first.")
     if not args.tokenizer.is_file():
         raise SystemExit(f"No tokenizer at {args.tokenizer} -- run tokenizer_train.py first.")
 
     tokenizer = Tokenizer.from_file(str(args.tokenizer))
     eot_id = tokenizer.token_to_id("<|endoftext|>")
+    file_id = tokenizer.token_to_id("<|file|>")
+    if eot_id is None or file_id is None:
+        raise SystemExit(f"{args.tokenizer} lacks <|endoftext|>/<|file|> special tokens -- retrain with tokenizer_train.py.")
 
-    files = list(iter_corpus_files(args.corpus_dir))
-    if not files:
-        raise SystemExit(f"No corpus files found under {args.corpus_dir}.")
+    records = [json.loads(line) for line in corpus_path.open()]
+    meta = {"piece": args.piece, "tokenizer": args.tokenizer.name, "tokenizer_sha256": file_sha256(args.tokenizer),
+            "vocab_size": tokenizer.get_vocab_size(), "corpus_sha256": file_sha256(corpus_path), "tokens": {}}
 
-    rng = random.Random(args.seed)
-    rng.shuffle(files)
-    n_val = max(1, int(len(files) * args.val_fraction))
-    val_files, train_files = files[:n_val], files[n_val:]
-
-    def encode_split(split_files: list[Path], name: str) -> None:
+    for split in ("train", "val"):
         ids: list[int] = []
-        for path in tqdm(split_files, desc=f"tokenizing {name}"):
-            text = path.read_text(errors="ignore")
-            ids.extend(tokenizer.encode(text).ids)
+        split_records = [r for r in records if r["split"] == split]
+        # records are in source order, so consecutive same-path runs are one file
+        for path, group in itertools.groupby(split_records, key=lambda r: r["path"]):
+            ids.append(file_id)
+            ids.extend(tokenizer.encode(path + "\n").ids)
+            for rec in group:
+                ids.extend(tokenizer.encode(rec["text"]).ids)
             ids.append(eot_id)
         arr = np.array(ids, dtype=np.uint16)
-        out_path = args.out_dir / f"{name}.bin"
-        arr.tofile(out_path)
-        print(f"{name}: {len(split_files)} files, {len(arr):,} tokens -> {out_path}")
+        arr.tofile(data_dir / f"{split}.bin")
+        meta["tokens"][split] = len(arr)
+        print(f"{split}: {len(split_records)} units, {len(arr):,} tokens -> {data_dir / f'{split}.bin'}")
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    encode_split(train_files, "train")
-    encode_split(val_files, "val")
+    (data_dir / "data_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+    max_block = max(cfg.block_size for cfg, _ in PRESETS.values())
+    if meta["tokens"]["val"] <= max_block:
+        print(f"WARNING: val has only {meta['tokens']['val']} tokens; presets with block_size >= that can't sample from it.")
 
 
 if __name__ == "__main__":

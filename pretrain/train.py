@@ -1,21 +1,30 @@
-"""Single-GPU pretraining loop. Run from inside pretrain/:
+"""Single-GPU pretraining loop for one piece. Run from inside pretrain/:
 
-    python train.py                  # start fresh
-    python train.py --resume         # resume from checkpoints/ckpt.pt
+    python train.py --piece f2fs --preset tiny            # start fresh
+    python train.py --piece f2fs --preset tiny --resume   # resume from checkpoints/f2fs/ckpt.pt
 
-Expects data/train.bin + data/val.bin (prepare_data.py) and
-data/tokenizer.json (tokenizer_train.py) to already exist.
+Expects data/<piece>/train.bin + val.bin + data_meta.json (prepare_data.py)
+and the shared tokenizer (tokenizer_train.py) to already exist.
 
-Logs to stdout and appends to checkpoints/log.csv (iter,loss,val_loss,lr,
-tok_per_sec) so you can plot the loss curve afterward -- watching train_loss
-keep dropping while val_loss flattens/rises is the single most important
-thing to look at with a corpus this small (see README's overfitting note).
+Writes checkpoints/<piece>/ckpt.pt (latest) and ckpt_best.pt (lowest
+val_loss so far -- on a corpus this small the latest checkpoint is usually
+the more memorized one, not the better one). Every checkpoint records the
+piece, preset, tokenizer sha256 and corpus sha256 that produced it, so
+pieces trained in different runs or on different machines can be checked
+for compatibility before anything stitches them together.
+
+Logs to stdout and appends to checkpoints/<piece>/log.csv (iter,train_loss,
+val_loss,lr,tok_per_sec) so you can plot the loss curve afterward --
+watching train_loss keep dropping while val_loss flattens/rises is the
+single most important thing to look at with a corpus this small.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
+import json
 import math
 import time
 from pathlib import Path
@@ -23,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from config import GPTConfig, TrainConfig
+from config import PRESETS, GPTConfig, TrainConfig, file_sha256
 from model import GPT
 
 
@@ -70,20 +79,24 @@ def estimate_loss(model, cfg: TrainConfig, gcfg: GPTConfig, ctx) -> dict[str, fl
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--piece", default="f2fs")
+    parser.add_argument("--preset", default="tiny", choices=sorted(PRESETS))
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--max-iters", type=int, default=None, help="override config.TrainConfig.max_iters")
+    parser.add_argument("--max-iters", type=int, default=None, help="override the preset's max_iters")
     args = parser.parse_args()
 
-    gcfg = GPTConfig()
-    tcfg = TrainConfig()
+    preset_gcfg, train_overrides = PRESETS[args.preset]
+    gcfg = copy.deepcopy(preset_gcfg)
+    tcfg = TrainConfig(piece=args.piece, **train_overrides)
     if args.max_iters is not None:
         tcfg.max_iters = args.max_iters
 
     torch.manual_seed(tcfg.seed)
     if not torch.cuda.is_available() and tcfg.device == "cuda":
-        print("CUDA not available -- falling back to CPU. This will be extremely slow; expected on this project.")
+        print("CUDA not available -- falling back to CPU (no torch.compile). Fine for a smoke test, far too slow for a real run.")
         tcfg.device = "cpu"
+        tcfg.compile = False
 
     device_type = "cuda" if "cuda" in tcfg.device else "cpu"
     ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[tcfg.dtype]
@@ -93,19 +106,43 @@ def main() -> None:
         else torch.autocast(device_type="cpu", dtype=torch.bfloat16, enabled=False)
     )
 
-    if not (tcfg.data_dir / "train.bin").is_file():
-        raise SystemExit(f"No data/train.bin at {tcfg.data_dir} -- run tokenizer_train.py then prepare_data.py first.")
+    meta_path = tcfg.data_dir / "data_meta.json"
+    if not meta_path.is_file():
+        raise SystemExit(
+            f"No {meta_path} -- run build_corpus.py, tokenizer_train.py, then prepare_data.py --piece {tcfg.piece} first."
+        )
+    data_meta = json.loads(meta_path.read_text())
+    if not tcfg.tokenizer_path.is_file() or file_sha256(tcfg.tokenizer_path) != data_meta["tokenizer_sha256"]:
+        raise SystemExit(
+            f"{tcfg.tokenizer_path} is missing or isn't the tokenizer data/{tcfg.piece}/*.bin was encoded with -- "
+            "re-run prepare_data.py."
+        )
+    if data_meta["vocab_size"] != gcfg.vocab_size:
+        raise SystemExit(f"tokenizer vocab {data_meta['vocab_size']} != GPTConfig.vocab_size {gcfg.vocab_size}")
+    for split, n in data_meta["tokens"].items():
+        if n <= gcfg.block_size + 1:
+            raise SystemExit(f"{split}.bin has {n} tokens, too few for block_size={gcfg.block_size}")
+    provenance = {
+        "piece": tcfg.piece,
+        "preset": args.preset,
+        "tokenizer": tcfg.tokenizer_path.name,
+        "tokenizer_sha256": data_meta["tokenizer_sha256"],
+        "corpus_sha256": data_meta["corpus_sha256"],
+    }
 
     tcfg.out_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = tcfg.out_dir / "ckpt.pt"
+    best_path = tcfg.out_dir / "ckpt_best.pt"
     log_path = tcfg.out_dir / "log.csv"
 
     model = GPT(gcfg).to(tcfg.device)
-    print(f"model: {model.num_params() / 1e6:.1f}M params, block_size={gcfg.block_size}, vocab_size={gcfg.vocab_size}")
+    print(f"{tcfg.piece}/{args.preset}: {model.num_params() / 1e6:.1f}M params, block_size={gcfg.block_size}, "
+          f"vocab_size={gcfg.vocab_size}, train {data_meta['tokens']['train']:,} / val {data_meta['tokens']['val']:,} tokens")
 
     optimizer = model.configure_optimizer(tcfg.weight_decay, tcfg.lr, (tcfg.beta1, tcfg.beta2))
 
     start_iter = 0
+    best_val = float("inf")
     if args.resume:
         if not ckpt_path.is_file():
             raise SystemExit(f"--resume given but no checkpoint at {ckpt_path}")
@@ -114,10 +151,22 @@ def main() -> None:
         # rejects. Safe here since this checkpoint is always one we wrote
         # ourselves, never an untrusted download.
         ckpt = torch.load(ckpt_path, map_location=tcfg.device, weights_only=False)
+        mismatched = {k: (ckpt.get(k), v) for k, v in provenance.items() if ckpt.get(k) != v}
+        if mismatched:
+            raise SystemExit(f"{ckpt_path} was trained with different settings (checkpoint, now): {mismatched}")
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         start_iter = ckpt["iter"] + 1
-        print(f"resumed from {ckpt_path} at iter {start_iter}")
+        best_val = ckpt.get("best_val", best_val)
+        print(f"resumed from {ckpt_path} at iter {start_iter} (best val_loss so far {best_val:.4f})")
+
+    def save(path: Path, it: int) -> None:
+        raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model  # unwrap torch.compile wrapper
+        torch.save(
+            {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(), "iter": it,
+             "gpt_config": gcfg, "best_val": best_val, **provenance},
+            path,
+        )
 
     if tcfg.compile:
         print("compiling model (torch.compile) -- first step will be slow ...")
@@ -147,6 +196,10 @@ def main() -> None:
             log_file.flush()
             t_last = time.time()
             tokens_since_last_log = 0
+            if it > 0 and losses["val"] < best_val:
+                best_val = losses["val"]
+                save(best_path, it)
+                print(f"  new best val_loss -> {best_path}")
 
         optimizer.zero_grad(set_to_none=True)
         for micro_step in range(tcfg.grad_accum_steps):
@@ -162,12 +215,8 @@ def main() -> None:
         if it % tcfg.log_interval == 0 and it % tcfg.eval_interval != 0:
             print(f"iter {it}: loss {loss.item() * tcfg.grad_accum_steps:.4f}, lr {lr:.2e}")
 
-        if it > 0 and it % tcfg.checkpoint_interval == 0:
-            raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model  # unwrap torch.compile wrapper
-            torch.save(
-                {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(), "iter": it, "gpt_config": gcfg},
-                ckpt_path,
-            )
+        if it > 0 and (it % tcfg.checkpoint_interval == 0 or it == tcfg.max_iters):
+            save(ckpt_path, it)
             print(f"  saved checkpoint at iter {it} -> {ckpt_path}")
 
     log_file.close()

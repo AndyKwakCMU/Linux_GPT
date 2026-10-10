@@ -44,6 +44,24 @@ compliance rate (not the verifier) is the open problem — candidates are a
 larger model, Ollama structured-output/JSON mode, or a reranker ahead of
 generation instead of raw RRF.
 
+## Two halves: verified RAG + from-source pieces (2026-10)
+
+The RAG pipeline below is unchanged and stays the source of truth. Alongside
+it, `pretrain/` trains small GPTs **from scratch, directly on kernel
+source** -- one "piece" per subsystem, F2FS first, on a 16GB laptop GPU --
+so the system has intuition whose weights came from the code itself rather
+than from a general model reading retrieved chunks. General pretrained
+models (Qwen etc.) keep the English jobs: reading questions, writing
+answers, orchestrating calls to the pieces. Later, more pieces (VFS, block,
+mm) get trained on rented GPUs and stitched together; they all share one
+frozen tokenizer so that stays possible. It's also a vehicle for learning
+how pretraining actually works. Details, sizing and roadmap:
+[`pretrain/README.md`](pretrain/README.md).
+
+**Invariant:** nothing a piece produces counts as a citation or bypasses
+the verifier. A piece may influence *which* chunks are retrieved, or be
+shown as clearly-labeled unverified intuition -- never as a verified claim.
+
 ## Architecture
 
 ```
@@ -95,6 +113,7 @@ src/linuxgpt/
   lessons/                    # hand-authored synthesis docs (UNREVIEWED until approved)
 tests/                        # pytest suite (25 tests)
 scripts/fetch_kernel_source.py
+pretrain/                     # from-scratch piece training (own venv; see pretrain/README.md)
 ```
 
 ## Running it
@@ -123,6 +142,12 @@ default.
 
 ## Next steps
 
+- Train the F2FS piece on the laptop (`pretrain/`: `tiny` vs `small`,
+  read the curves, run `eval_probes.py`).
+- Bridge stage 1: serve a piece checkpoint locally and evaluate it as a
+  second retriever/reranker next to `nomic-embed-text` (verifier
+  untouched). Then bridge stage 2: pieces as tools the orchestrating LLM
+  calls. See `pretrain/README.md` "Roadmap".
 - Decide on and build a real interface (CLI is the current stopgap; a local
   web UI is deferred, not decided against).
 - Improve citation compliance on compound questions (larger model /
