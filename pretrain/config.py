@@ -1,6 +1,6 @@
 """Model + training hyperparameters: two dataclasses plus named presets. No
-framework config magic -- edit values here; train.py's only overrides are
---piece, --preset and --max-iters.
+framework config magic -- edit values here; train.py's overrides are
+--piece, --preset, --run, --max-iters, --dropout and --weight-decay.
 
 Sizing note: the F2FS piece (pieces/f2fs.yaml) is only ~0.5M tokens. A
 GPT-2-small-sized model memorizes that in well under an hour, so on the
@@ -34,6 +34,7 @@ class GPTConfig:
 @dataclass
 class TrainConfig:
     piece: str = "f2fs"
+    run: str = ""  # optional run name: checkpoints/<piece>/<run>/ so experiments don't overwrite each other
     tokenizer_path: Path = DEFAULT_TOKENIZER
 
     # batching
@@ -57,7 +58,7 @@ class TrainConfig:
     checkpoint_interval: int = 500
 
     device: str = "cuda"
-    dtype: str = "bfloat16"  # Ada Lovelace has native bf16 tensor cores -- no fp16 loss-scaling complexity needed
+    dtype: str = "bfloat16"  # native on Ampere+; train.py falls back to float16 + GradScaler on GPUs without it (e.g. Turing)
     compile: bool = True  # torch.compile -- meaningful speedup on Ada, first iter will be slow (graph capture)
 
     seed: int = 1337
@@ -68,7 +69,8 @@ class TrainConfig:
 
     @property
     def out_dir(self) -> Path:
-        return PRETRAIN_ROOT / "checkpoints" / self.piece
+        base = PRETRAIN_ROOT / "checkpoints" / self.piece
+        return base / self.run if self.run else base
 
 
 # name -> (model shape, TrainConfig overrides). Rough non-embedding param

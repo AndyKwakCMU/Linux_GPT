@@ -12,3 +12,4 @@ __pycache__/
 pretrain/.venv/
 pretrain/data/
 pretrain/checkpoints/
+pretrain/logs/

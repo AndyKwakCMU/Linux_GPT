@@ -2,6 +2,7 @@
 
     python train.py --piece f2fs --preset tiny            # start fresh
     python train.py --piece f2fs --preset tiny --resume   # resume from checkpoints/f2fs/ckpt.pt
+    python train.py --piece f2fs --preset tiny --run drop03 --dropout 0.3   # -> checkpoints/f2fs/drop03/
 
 Expects data/<piece>/train.bin + val.bin + data_meta.json (prepare_data.py)
 and the shared tokenizer (tokenizer_train.py) to already exist.
@@ -84,13 +85,20 @@ def main() -> None:
     parser.add_argument("--preset", default="tiny", choices=sorted(PRESETS))
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-iters", type=int, default=None, help="override the preset's max_iters")
+    parser.add_argument("--dropout", type=float, default=None, help="override the preset's dropout")
+    parser.add_argument("--weight-decay", type=float, default=None, help="override the preset's weight_decay")
+    parser.add_argument("--run", default="", help="run name: write to checkpoints/<piece>/<run>/ instead of checkpoints/<piece>/")
     args = parser.parse_args()
 
     preset_gcfg, train_overrides = PRESETS[args.preset]
     gcfg = copy.deepcopy(preset_gcfg)
-    tcfg = TrainConfig(piece=args.piece, **train_overrides)
+    tcfg = TrainConfig(piece=args.piece, run=args.run, **train_overrides)
     if args.max_iters is not None:
         tcfg.max_iters = args.max_iters
+    if args.dropout is not None:
+        gcfg.dropout = args.dropout
+    if args.weight_decay is not None:
+        tcfg.weight_decay = args.weight_decay
 
     torch.manual_seed(tcfg.seed)
     if not torch.cuda.is_available() and tcfg.device == "cuda":
@@ -99,6 +107,10 @@ def main() -> None:
         tcfg.compile = False
 
     device_type = "cuda" if "cuda" in tcfg.device else "cpu"
+    if device_type == "cuda" and tcfg.dtype == "bfloat16" and not torch.cuda.is_bf16_supported(including_emulation=False):
+        # pre-Ampere GPUs (e.g. Turing, sm_75) emulate bf16 slowly -- use fp16 + loss scaling instead
+        print(f"{torch.cuda.get_device_name(0)} has no native bf16 -- using float16 with GradScaler")
+        tcfg.dtype = "float16"
     ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[tcfg.dtype]
     ctx = (
         torch.autocast(device_type=device_type, dtype=ptdtype)
@@ -136,10 +148,12 @@ def main() -> None:
     log_path = tcfg.out_dir / "log.csv"
 
     model = GPT(gcfg).to(tcfg.device)
-    print(f"{tcfg.piece}/{args.preset}: {model.num_params() / 1e6:.1f}M params, block_size={gcfg.block_size}, "
+    print(f"{tcfg.piece}/{args.preset}{'/' + tcfg.run if tcfg.run else ''}: dropout={gcfg.dropout}, weight_decay={tcfg.weight_decay}, {model.num_params() / 1e6:.1f}M params, block_size={gcfg.block_size}, "
           f"vocab_size={gcfg.vocab_size}, train {data_meta['tokens']['train']:,} / val {data_meta['tokens']['val']:,} tokens")
 
     optimizer = model.configure_optimizer(tcfg.weight_decay, tcfg.lr, (tcfg.beta1, tcfg.beta2))
+    # loss scaling is only needed for fp16 (narrow exponent range); a no-op passthrough otherwise
+    scaler = torch.amp.GradScaler(device_type, enabled=(device_type == "cuda" and tcfg.dtype == "float16"))
 
     start_iter = 0
     best_val = float("inf")
@@ -156,6 +170,8 @@ def main() -> None:
             raise SystemExit(f"{ckpt_path} was trained with different settings (checkpoint, now): {mismatched}")
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
+        if "scaler" in ckpt:
+            scaler.load_state_dict(ckpt["scaler"])
         start_iter = ckpt["iter"] + 1
         best_val = ckpt.get("best_val", best_val)
         print(f"resumed from {ckpt_path} at iter {start_iter} (best val_loss so far {best_val:.4f})")
@@ -163,7 +179,8 @@ def main() -> None:
     def save(path: Path, it: int) -> None:
         raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model  # unwrap torch.compile wrapper
         torch.save(
-            {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(), "iter": it,
+            {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
+             "scaler": scaler.state_dict(), "iter": it,
              "gpt_config": gcfg, "best_val": best_val, **provenance},
             path,
         )
@@ -207,10 +224,12 @@ def main() -> None:
             with ctx:
                 _, loss = model(x, y)
                 loss = loss / tcfg.grad_accum_steps
-            loss.backward()
+            scaler.scale(loss).backward()
             tokens_since_last_log += x.numel()
+        scaler.unscale_(optimizer)  # clip the true gradients, not the scaled ones
         torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.grad_clip)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
 
         if it % tcfg.log_interval == 0 and it % tcfg.eval_interval != 0:
             print(f"iter {it}: loss {loss.item() * tcfg.grad_accum_steps:.4f}, lr {lr:.2e}")

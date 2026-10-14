@@ -1,0 +1,177 @@
+# Filesystem-stack piece: F2FS plus the code around it -- VFS core, the
+# layers F2FS is built on (iomap, fscrypt, fsverity, quota, page cache /
+# mm, block), and other local + flash filesystems that solve the same
+# problems differently (ext4/jbd2 journaling, btrfs/bcachefs/xfs, nilfs2's
+# log structure, ubifs/jffs2 on raw flash, erofs as F2FS's Android sibling).
+#
+# ~23x the f2fs piece's corpus. Purpose: a broader base model that can then
+# be fine-tuned on F2FS, since the f2fs piece alone (0.5M tokens) overfits
+# within ~12 epochs regardless of size/regularization.
+#
+# Deliberately left out: fs/nls (codepage tables, not code), network and
+# cluster filesystems (nfs, smb, ceph, afs, ocfs2, gfs2, dlm -- mostly
+# protocol code), and the rest of include/ (only the fs/block/mm headers).
+#
+# Like every piece this is NOT the RAG index scope (kernel_manifest.yaml).
+# Path semantics: see f2fs.yaml.
+
+name: fs
+kernel_version: "v6.12"
+tarball_name: "linux-6.12.tar.xz"
+checksums_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc"
+
+paths:
+  # --- VFS core: fs/*.c, fs/*.h (non-recursive) ---
+  - type: glob
+    path: fs
+    pattern: "*.[ch]"
+
+  # --- filesystem infrastructure, filesystems, block layer, mm ---
+  - type: dir
+    path: fs/f2fs
+  - type: dir
+    path: fs/iomap
+  - type: dir
+    path: fs/crypto
+  - type: dir
+    path: fs/verity
+  - type: dir
+    path: fs/quota
+  - type: dir
+    path: fs/jbd2
+  - type: dir
+    path: fs/ext4
+  - type: dir
+    path: fs/xfs
+  - type: dir
+    path: fs/btrfs
+  - type: dir
+    path: fs/bcachefs
+  - type: dir
+    path: fs/erofs
+  - type: dir
+    path: fs/nilfs2
+  - type: dir
+    path: fs/ubifs
+  - type: dir
+    path: fs/jffs2
+  - type: dir
+    path: fs/fat
+  - type: dir
+    path: fs/exfat
+  - type: dir
+    path: fs/ntfs3
+  - type: dir
+    path: fs/udf
+  - type: dir
+    path: block
+  - type: dir
+    path: mm
+
+  # --- headers for the fs / block / mm interfaces ---
+  - type: file
+    path: include/linux/backing-dev.h
+  - type: file
+    path: include/linux/bio.h
+  - type: file
+    path: include/linux/blk-mq.h
+  - type: file
+    path: include/linux/blk_types.h
+  - type: file
+    path: include/linux/blkdev.h
+  - type: file
+    path: include/linux/buffer_head.h
+  - type: file
+    path: include/linux/dcache.h
+  - type: file
+    path: include/linux/folio_queue.h
+  - type: file
+    path: include/linux/fs.h
+  - type: file
+    path: include/linux/fs_context.h
+  - type: file
+    path: include/linux/fscrypt.h
+  - type: file
+    path: include/linux/fsverity.h
+  - type: file
+    path: include/linux/iomap.h
+  - type: file
+    path: include/linux/jbd2.h
+  - type: file
+    path: include/linux/mm.h
+  - type: file
+    path: include/linux/mm_types.h
+  - type: file
+    path: include/linux/mpage.h
+  - type: file
+    path: include/linux/page-flags.h
+  - type: file
+    path: include/linux/pagemap.h
+  - type: file
+    path: include/linux/pagevec.h
+  - type: file
+    path: include/linux/quota.h
+  - type: file
+    path: include/linux/swap.h
+  - type: file
+    path: include/linux/writeback.h
+  - type: file
+    path: include/linux/xattr.h
+  - type: file
+    path: include/linux/f2fs_fs.h
+  - type: file
+    path: include/uapi/linux/blkdev.h
+  - type: file
+    path: include/uapi/linux/btrfs.h
+  - type: file
+    path: include/uapi/linux/ext4.h
+  - type: file
+    path: include/uapi/linux/f2fs.h
+  - type: file
+    path: include/uapi/linux/fs.h
+  - type: file
+    path: include/uapi/linux/fscrypt.h
+  - type: file
+    path: include/uapi/linux/fsverity.h
+  - type: file
+    path: include/uapi/linux/quota.h
+  - type: file
+    path: include/uapi/linux/xattr.h
+  - type: file
+    path: include/trace/events/block.h
+  - type: file
+    path: include/trace/events/btrfs.h
+  - type: file
+    path: include/trace/events/erofs.h
+  - type: file
+    path: include/trace/events/ext4.h
+  - type: file
+    path: include/trace/events/f2fs.h
+  - type: file
+    path: include/trace/events/filemap.h
+  - type: file
+    path: include/trace/events/jbd2.h
+  - type: file
+    path: include/trace/events/pagemap.h
+  - type: file
+    path: include/trace/events/writeback.h
+
+  # --- docs ---
+  - type: dir
+    path: Documentation/filesystems
+  - type: dir
+    path: Documentation/block
+  - type: dir
+    path: Documentation/mm
+  - type: file
+    path: Documentation/admin-guide/mm/concepts.rst
+  - type: file
+    path: Documentation/driver-api/mtdnand.rst
+  - type: file
+    path: Documentation/driver-api/mtd/nand_ecc.rst
+  - type: file
+    path: Documentation/core-api/dma-api-howto.rst
+  - type: file
+    path: Documentation/core-api/cachetlb.rst
+  - type: file
+    path: Documentation/core-api/irq/concepts.rst
