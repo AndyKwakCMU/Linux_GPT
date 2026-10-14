@@ -3,6 +3,8 @@
     python train.py --piece f2fs --preset tiny            # start fresh
     python train.py --piece f2fs --preset tiny --resume   # resume from checkpoints/f2fs/ckpt.pt
     python train.py --piece f2fs --preset tiny --run drop03 --dropout 0.3   # -> checkpoints/f2fs/drop03/
+    python train.py --piece f2fs --preset small --run ft --init-from checkpoints/fs/small5000/ckpt_best.pt \
+        --lr 1e-4 --max-iters 600 --eval-interval 25                     # fine-tune another piece's weights
 
 Expects data/<piece>/train.bin + val.bin + data_meta.json (prepare_data.py)
 and the shared tokenizer (tokenizer_train.py) to already exist.
@@ -88,7 +90,14 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=None, help="override the preset's dropout")
     parser.add_argument("--weight-decay", type=float, default=None, help="override the preset's weight_decay")
     parser.add_argument("--run", default="", help="run name: write to checkpoints/<piece>/<run>/ instead of checkpoints/<piece>/")
+    parser.add_argument("--init-from", type=Path, default=None,
+                        help="fine-tune: start from this checkpoint's weights (same preset + tokenizer), fresh optimizer and schedule")
+    parser.add_argument("--lr", type=float, default=None, help="override the preset's peak lr (min_lr becomes lr/10)")
+    parser.add_argument("--warmup-iters", type=int, default=None, help="override the preset's warmup_iters")
+    parser.add_argument("--eval-interval", type=int, default=None, help="override the preset's eval_interval")
     args = parser.parse_args()
+    if args.resume and args.init_from:
+        raise SystemExit("--resume and --init-from are mutually exclusive (resume a fine-tune with --resume alone)")
 
     preset_gcfg, train_overrides = PRESETS[args.preset]
     gcfg = copy.deepcopy(preset_gcfg)
@@ -99,6 +108,12 @@ def main() -> None:
         gcfg.dropout = args.dropout
     if args.weight_decay is not None:
         tcfg.weight_decay = args.weight_decay
+    if args.lr is not None:
+        tcfg.lr, tcfg.min_lr = args.lr, args.lr / 10
+    if args.warmup_iters is not None:
+        tcfg.warmup_iters = args.warmup_iters
+    if args.eval_interval is not None:
+        tcfg.eval_interval = args.eval_interval
 
     torch.manual_seed(tcfg.seed)
     if not torch.cuda.is_available() and tcfg.device == "cuda":
@@ -157,6 +172,20 @@ def main() -> None:
 
     start_iter = 0
     best_val = float("inf")
+    init_from = None
+    if args.init_from:
+        # same reasoning as the --resume load below: only our own checkpoints
+        src = torch.load(args.init_from, map_location=tcfg.device, weights_only=False)
+        if src.get("tokenizer_sha256") != provenance["tokenizer_sha256"]:
+            raise SystemExit(f"{args.init_from} was trained with a different tokenizer than data/{tcfg.piece}/")
+        shape = ("vocab_size", "block_size", "n_layer", "n_head", "n_embd", "bias")
+        if any(getattr(src["gpt_config"], f) != getattr(gcfg, f) for f in shape):
+            raise SystemExit(f"{args.init_from} is a {src.get('preset')} model; use --preset {src.get('preset')}")
+        model.load_state_dict(src["model"])
+        init_from = {"path": str(args.init_from), "piece": src.get("piece"), "preset": src.get("preset"),
+                     "iter": src.get("iter"), "corpus_sha256": src.get("corpus_sha256")}
+        print(f"initialized from {args.init_from} ({src.get('piece')}/{src.get('preset')} @ iter {src.get('iter')}, "
+              f"best val_loss {src.get('best_val', float('nan')):.4f} on its own corpus)")
     if args.resume:
         if not ckpt_path.is_file():
             raise SystemExit(f"--resume given but no checkpoint at {ckpt_path}")
@@ -173,6 +202,7 @@ def main() -> None:
         if "scaler" in ckpt:
             scaler.load_state_dict(ckpt["scaler"])
         start_iter = ckpt["iter"] + 1
+        init_from = ckpt.get("init_from")
         best_val = ckpt.get("best_val", best_val)
         print(f"resumed from {ckpt_path} at iter {start_iter} (best val_loss so far {best_val:.4f})")
 
@@ -181,7 +211,7 @@ def main() -> None:
         torch.save(
             {"model": raw_model.state_dict(), "optimizer": optimizer.state_dict(),
              "scaler": scaler.state_dict(), "iter": it,
-             "gpt_config": gcfg, "best_val": best_val, **provenance},
+             "gpt_config": gcfg, "best_val": best_val, "init_from": init_from, **provenance},
             path,
         )
 

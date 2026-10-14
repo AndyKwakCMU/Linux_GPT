@@ -1,6 +1,7 @@
 """Model + training hyperparameters: two dataclasses plus named presets. No
 framework config magic -- edit values here; train.py's overrides are
---piece, --preset, --run, --max-iters, --dropout and --weight-decay.
+--piece, --preset, --run, --init-from, --max-iters, --dropout, --weight-decay,
+--lr, --warmup-iters and --eval-interval.
 
 Sizing note: the F2FS piece (pieces/f2fs.yaml) is only ~0.5M tokens. A
 GPT-2-small-sized model memorizes that in well under an hour, so on the
