@@ -20,12 +20,36 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
 from tokenizers import Tokenizer
 
 from config import DEFAULT_TOKENIZER, PRETRAIN_ROOT, PRESETS, file_sha256
+
+
+FILE, EOT = object(), object()  # placeholders for the special tokens in the segment stream
+ENCODE_BATCH = 8192  # segments per encode_batch call (Rust-side parallel; whole-kernel corpus is ~10^6 units)
+
+
+def split_records(corpus_path: Path, split: str) -> Iterator[dict]:
+    # streamed, not loaded: the whole-kernel corpus.jsonl is >1GB
+    with corpus_path.open() as f:
+        for line in f:
+            rec = json.loads(line)
+            if rec["split"] == split:
+                yield rec
+
+
+def segments(records: Iterator[dict]) -> Iterator[object]:
+    # records are in source order, so consecutive same-path runs are one file
+    for path, group in itertools.groupby(records, key=lambda r: r["path"]):
+        yield FILE
+        yield path + "\n"
+        for rec in group:
+            yield rec["text"]
+        yield EOT
 
 
 def main() -> None:
@@ -47,24 +71,30 @@ def main() -> None:
     if eot_id is None or file_id is None:
         raise SystemExit(f"{args.tokenizer} lacks <|endoftext|>/<|file|> special tokens -- retrain with tokenizer_train.py.")
 
-    records = [json.loads(line) for line in corpus_path.open()]
     meta = {"piece": args.piece, "tokenizer": args.tokenizer.name, "tokenizer_sha256": file_sha256(args.tokenizer),
             "vocab_size": tokenizer.get_vocab_size(), "corpus_sha256": file_sha256(corpus_path), "tokens": {}}
 
     for split in ("train", "val"):
-        ids: list[int] = []
-        split_records = [r for r in records if r["split"] == split]
-        # records are in source order, so consecutive same-path runs are one file
-        for path, group in itertools.groupby(split_records, key=lambda r: r["path"]):
-            ids.append(file_id)
-            ids.extend(tokenizer.encode(path + "\n").ids)
-            for rec in group:
-                ids.extend(tokenizer.encode(rec["text"]).ids)
-            ids.append(eot_id)
-        arr = np.array(ids, dtype=np.uint16)
-        arr.tofile(data_dir / f"{split}.bin")
-        meta["tokens"][split] = len(arr)
-        print(f"{split}: {len(split_records)} units, {len(arr):,} tokens -> {data_dir / f'{split}.bin'}")
+        n_tokens = 0
+        n_units = 0
+        stream = segments(split_records(corpus_path, split))
+        with (data_dir / f"{split}.bin").open("wb") as out:
+            while chunk := list(itertools.islice(stream, ENCODE_BATCH)):
+                texts = [s for s in chunk if isinstance(s, str)]
+                encoded = iter(tokenizer.encode_batch(texts))
+                ids: list[int] = []
+                for seg in chunk:
+                    if seg is FILE:
+                        ids.append(file_id)
+                    elif seg is EOT:
+                        ids.append(eot_id)
+                    else:
+                        ids.extend(next(encoded).ids)
+                n_units += len(texts) - sum(seg is FILE for seg in chunk)  # every FILE is followed by a path-header text
+                np.array(ids, dtype=np.uint16).tofile(out)
+                n_tokens += len(ids)
+        meta["tokens"][split] = n_tokens
+        print(f"{split}: {n_units} units, {n_tokens:,} tokens -> {data_dir / f'{split}.bin'}")
 
     (data_dir / "data_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 

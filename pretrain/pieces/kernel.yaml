@@ -1,0 +1,68 @@
+# Whole-kernel base piece: every .c/.h/.rst in the pinned v6.12 tree, minus
+# generated files over 256KB (same cutoff as tokenizer_train.py -- in v6.12
+# mostly GPU/SoC register headers that would teach the model hex tables).
+#
+# Purpose: base pretraining. The fs piece plateaus around val_loss 1.6 at
+# every size from 10M to 60M params, i.e. it's data-limited at ~10M tokens;
+# this piece is ~30x more. The intended chain is kernel -> fs -> f2fs via
+# train.py --init-from, all on the same frozen tokenizer.
+#
+# Train/val is the same deterministic per-unit hash as every other piece,
+# so the fs and f2fs pieces' val units are val here too -- nothing a
+# downstream probe tests on is ever seen in base pretraining.
+#
+# Like every piece this is NOT the RAG index scope (kernel_manifest.yaml).
+
+name: kernel
+kernel_version: "v6.12"
+tarball_name: "linux-6.12.tar.xz"
+checksums_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc"
+max_file_bytes: 262144
+
+paths:
+  - type: dir
+    path: arch
+  - type: dir
+    path: block
+  - type: dir
+    path: certs
+  - type: dir
+    path: crypto
+  - type: dir
+    path: Documentation
+  - type: dir
+    path: drivers
+  - type: dir
+    path: fs
+  - type: dir
+    path: include
+  - type: dir
+    path: init
+  - type: dir
+    path: io_uring
+  - type: dir
+    path: ipc
+  - type: dir
+    path: kernel
+  - type: dir
+    path: lib
+  - type: dir
+    path: mm
+  - type: dir
+    path: net
+  - type: dir
+    path: rust
+  - type: dir
+    path: samples
+  - type: dir
+    path: scripts
+  - type: dir
+    path: security
+  - type: dir
+    path: sound
+  - type: dir
+    path: tools
+  - type: dir
+    path: usr
+  - type: dir
+    path: virt

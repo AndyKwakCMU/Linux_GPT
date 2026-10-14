@@ -42,6 +42,7 @@ class Piece:
     tarball_name: str
     checksums_url: str
     paths: list[PathSpec]
+    max_file_bytes: int | None = None  # skip larger files (generated register headers etc.), like tokenizer_train.py
 
 
 def load_piece(name: str) -> Piece:
@@ -56,6 +57,7 @@ def load_piece(name: str) -> Piece:
         tarball_name=data["tarball_name"],
         checksums_url=data["checksums_url"],
         paths=[PathSpec(**p) for p in data["paths"]],
+        max_file_bytes=data.get("max_file_bytes"),
     )
 
 

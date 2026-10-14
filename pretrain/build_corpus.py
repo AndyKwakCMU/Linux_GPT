@@ -89,6 +89,7 @@ def main() -> None:
 
     matched_specs = set()
     n_files = 0
+    n_too_big = 0
     counts = {"train": 0, "val": 0}
     chars = {"train": 0, "val": 0}
     with corpus_path.open("w") as out:
@@ -104,6 +105,9 @@ def main() -> None:
             else:
                 continue  # Makefile, Kconfig, etc. under fs/f2fs
             matched_specs.update(specs)
+            if piece.max_file_bytes is not None and len(data) > piece.max_file_bytes:
+                n_too_big += 1
+                continue
             n_files += 1
             lines = data.decode("utf-8", errors="replace").splitlines(keepends=True)
             for start, end in splitter(lines):
@@ -133,6 +137,7 @@ def main() -> None:
         "tarball_sha256": tarball_sha,
         "val_fraction": args.val_fraction,
         "files": n_files,
+        "skipped_over_max_file_bytes": n_too_big,
         "units": counts,
         "chars": chars,
         "corpus_sha256": hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
@@ -140,6 +145,8 @@ def main() -> None:
     (out_dir / "corpus_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"{piece.name}: {n_files} files -> {counts['train']} train / {counts['val']} val units "
           f"({chars['train']:,} / {chars['val']:,} chars) -> {corpus_path}")
+    if n_too_big:
+        print(f"skipped {n_too_big} files over max_file_bytes={piece.max_file_bytes}")
 
 
 if __name__ == "__main__":
