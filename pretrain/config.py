@@ -82,6 +82,16 @@ PRESETS: dict[str, tuple[GPTConfig, dict]] = {
     "tiny": (GPTConfig(n_layer=4, n_head=4, n_embd=256, block_size=512), {}),
     # ~10.6M non-embedding + 6.3M embedding. Expect it to overfit sooner than tiny.
     "small": (GPTConfig(n_layer=6, n_head=6, n_embd=384, block_size=512), {"lr": 6e-4, "min_lr": 6e-5}),
+    # ~25M non-embedding + 8.4M embedding. Sized for the fs piece (~10M tokens) on a 16GB laptop GPU.
+    "medium": (
+        GPTConfig(n_layer=8, n_head=8, n_embd=512, block_size=512),
+        {"lr": 5e-4, "min_lr": 5e-5, "batch_size": 16, "grad_accum_steps": 4, "warmup_iters": 400, "eval_interval": 250},
+    ),
+    # ~59M non-embedding + 10.5M embedding. Upper end for the laptop; on ~10M tokens expect it to overfit before medium.
+    "large": (
+        GPTConfig(n_layer=12, n_head=10, n_embd=640, block_size=512),
+        {"lr": 4e-4, "min_lr": 4e-5, "batch_size": 16, "grad_accum_steps": 4, "warmup_iters": 400, "eval_interval": 250},
+    ),
     # GPT-2-small shape, ~85M non-embedding. Rented-GPU stage, big pieces only.
     "gpt2s": (
         GPTConfig(n_layer=12, n_head=12, n_embd=768, block_size=1024),
