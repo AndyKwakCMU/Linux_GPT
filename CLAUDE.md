@@ -35,7 +35,12 @@ python build_corpus.py --piece f2fs        # pieces/f2fs.yaml -> data/f2fs/corpu
 python prepare_data.py --piece f2fs        # -> data/f2fs/{train,val}.bin
 python train.py --piece f2fs --preset tiny # -> checkpoints/f2fs/{ckpt,ckpt_best}.pt, log.csv
 python eval_probes.py --piece f2fs         # held-out functions vs bigram/unigram baselines
+python train.py --piece f2fs --preset small --run ft --init-from <ckpt>   # fine-tune from another piece
+bash pipeline.sh medium                    # kernel -> fs -> f2fs chain + probes (hours; run detached)
 ```
+
+Pieces: `kernel` (whole tree, 259M tokens) ⊃ `fs` (10M) ⊃ `f2fs` (0.5M).
+Results and what they taught are in `pretrain/README.md` "Results".
 
 Requires a local Ollama daemon with `nomic-embed-text` and
 `qwen2.5-coder:7b-instruct-q4_K_M` pulled. Everything runs locally — no

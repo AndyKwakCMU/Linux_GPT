@@ -48,7 +48,8 @@ generation instead of raw RRF.
 
 The RAG pipeline below is unchanged and stays the source of truth. Alongside
 it, `pretrain/` trains small GPTs **from scratch, directly on kernel
-source** -- one "piece" per subsystem, F2FS first, on a 16GB laptop GPU --
+source** -- a whole-kernel base fine-tuned down to the filesystem stack
+and then F2FS, on a 16GB laptop GPU --
 so the system has intuition whose weights came from the code itself rather
 than from a general model reading retrieved chunks. General pretrained
 models (Qwen etc.) keep the English jobs: reading questions, writing
@@ -142,8 +143,9 @@ default.
 
 ## Next steps
 
-- Train the F2FS piece on the laptop (`pretrain/`: `tiny` vs `small`,
-  read the curves, run `eval_probes.py`).
+- ~~Train the F2FS piece~~ done: `kernel -> fs -> f2fs` chain, best is
+  `large` at 2.3 perplexity / 78.8% top-1 on held-out F2FS functions (vs
+  6.1 / 65.0% training on F2FS alone). See `pretrain/README.md` "Results".
 - Bridge stage 1: serve a piece checkpoint locally and evaluate it as a
   second retriever/reranker next to `nomic-embed-text` (verifier
   untouched). Then bridge stage 2: pieces as tools the orchestrating LLM
