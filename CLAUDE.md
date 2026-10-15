@@ -111,8 +111,17 @@ see `pretrain/README.md`. A piece's training files are set by
   `ingest/fetch.py`'s checksum + path-matching logic (pretrain stays
   standalone); keep them in sync.
 
+- **pretrain/ hardware**: the laptop GPU is a Turing Quadro RTX 5000 Max-Q
+  (no native bf16); `train.py` falls back to fp16 + GradScaler on its own.
+  Multi-hour runs go detached under `elogind-inhibit` (no systemd here) --
+  see `HANDOFF.md` "Gotchas".
+- **Checkpoints are expensive and gitignored** (`pretrain/checkpoints/`,
+  ~10 GPU-hours). Never delete or overwrite a `checkpoints/<piece>/<run>/`
+  without asking; new experiments get a new `--run` name.
+
 ## Next steps
 
-See README's "Next steps" section (F2FS piece training + bridge, Phase 2
-VFS/block/mm code indexing, interface decision, citation-compliance
+**Start with `HANDOFF.md`** (current state, best checkpoints, the open
+question before bridge stage 1). Then README's "Next steps" (bridge, Phase
+2 VFS/block/mm code indexing, interface decision, citation-compliance
 improvements, lesson review) and `pretrain/README.md`'s "Roadmap".
